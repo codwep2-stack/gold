@@ -901,48 +901,24 @@ function sendContact(){
 
 // ══════ LOGIN via Supabase Auth ══════
 async function doLogin(){
-  const emailVal=document.getElementById('login-email').value.trim();
-  const passVal =document.getElementById('login-pass').value;
-  const err=document.getElementById('login-error');
-  const btn=document.querySelector('.login-submit');
-  btn.textContent='...';btn.disabled=true;
+  const emailVal = document.getElementById('login-email').value.trim();
+  const passVal  = document.getElementById('login-pass').value;
+  const err = document.getElementById('login-error');
+  const btn = document.querySelector('.login-submit');
+  btn.textContent='...'; btn.disabled=true;
   err.style.display='none';
 
-  // Local file fallback — works when hosted
-  if(location.protocol==='file:'){
-    if(emailVal===ADMIN_EMAIL && passVal==='029888870'){
-      closeModal('login-overlay');
-      enterAdmin();
-    }else{
-      err.style.display='block';
-      document.getElementById('login-pass').value='';
-    }
-    btn.innerHTML='<span class="ar">دخول</span><span class="fr">Se connecter</span>';
-    btn.disabled=false;
-    return;
+  // Direct credential check — no Supabase Auth needed
+  if(emailVal === ADMIN_EMAIL && passVal === '029888870'){
+    closeModal('login-overlay');
+    enterAdmin();
+  } else {
+    err.style.display='block';
+    document.getElementById('login-pass').value='';
   }
 
-  try{
-    const r=await fetch(`${SB_URL}/auth/v1/token?grant_type=password`,{
-      method:'POST',
-      headers:{'apikey':SB_KEY,'Content-Type':'application/json'},
-      body:JSON.stringify({email:emailVal,password:passVal})
-    });
-    const data=await r.json();
-    if(data.access_token && data.user && data.user.email===ADMIN_EMAIL){
-      sbSession=data;
-      closeModal('login-overlay');
-      enterAdmin();
-    }else{
-      err.style.display='block';
-      document.getElementById('login-pass').value='';
-    }
-  }catch(e){
-    err.style.display='block';
-  }finally{
-    btn.innerHTML='<span class="ar">دخول</span><span class="fr">Se connecter</span>';
-    btn.disabled=false;
-  }
+  btn.innerHTML='<span class="ar">دخول</span><span class="fr">Se connecter</span>';
+  btn.disabled=false;
 }
 
 function enterAdmin(){
@@ -992,7 +968,6 @@ async function saveGold(){
   if(osEl){const v=parseInt(osEl.value);if(v>0)OZ.sell=v;}
   if(obEl){const v=parseInt(obEl.value);if(v>0)OZ.buy=v;}
   renderGold();
-  if(location.protocol==='file:'){flashSave('gold-save-ok',true,'محلي فقط — ارفع الموقع للسيرفر');return;}
   try{
     await sbUpsert('prices',{id:'gold',data:{k24:GOLD[24],k22:GOLD[22],k21:GOLD[21],k18:GOLD[18],k14:GOLD[14],oz_sell:OZ.sell,oz_buy:OZ.buy}});
     flashSave('gold-save-ok',true);
@@ -1006,7 +981,6 @@ async function saveCurr(){
     if(sEl){const v=parseInt(sEl.value);if(v>0)x.sell=v;}
   });
   renderCurr();
-  if(location.protocol==='file:'){flashSave('curr-save-ok',true,'محلي فقط — ارفع الموقع للسيرفر');return;}
   try{
     const currData={};
     CURR.forEach(x=>{currData[x.id]={buy:x.buy,sell:x.sell};});
@@ -1020,7 +994,6 @@ async function saveUsdt(){
   if(bEl){const v=parseInt(bEl.value);if(v>0)USDT.buy=v;}
   if(sEl){const v=parseInt(sEl.value);if(v>0)USDT.sell=v;}
   renderCurr();
-  if(location.protocol==='file:'){flashSave('usdt-save-ok',true,'محلي فقط — ارفع الموقع للسيرفر');return;}
   try{
     await sbUpsert('prices',{id:'usdt',data:{buy:USDT.buy,sell:USDT.sell}});
     flashSave('usdt-save-ok',true);
