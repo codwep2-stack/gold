@@ -694,7 +694,38 @@ td.num{text-align:left}
 </div>
 
 <script>
-// ══════ DATA ══════
+// ══════ SUPABASE CONFIG ══════
+const SB_URL  = 'https://zrapyjyrmluezjzmnkxq.supabase.co';
+const SB_KEY  = 'sb_publishable_hv7evvR-L5nOoKDYvEjZuQ_YhwWTG97';
+const ADMIN_EMAIL = 'yac200508@gmail.com';
+
+// ── Supabase REST helpers ──
+const sbHeaders = {'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json'};
+
+function sbAuthHeaders(){
+  const token = sbSession?.access_token || SB_KEY;
+  return {'apikey':SB_KEY,'Authorization':'Bearer '+token,'Content-Type':'application/json'};
+}
+
+async function sbGet(table){
+  const r=await fetch(`${SB_URL}/rest/v1/${table}?select=*`,{headers:sbHeaders});
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  return r.json();
+}
+async function sbUpsert(table,data){
+  const r=await fetch(`${SB_URL}/rest/v1/${table}`,{
+    method:'POST',
+    headers:{...sbAuthHeaders(),'Prefer':'resolution=merge-duplicates,return=representation'},
+    body:JSON.stringify(data)
+  });
+  if(!r.ok){
+    const err=await r.text();
+    throw new Error('HTTP '+r.status+': '+err);
+  }
+  return r.json();
+}
+
+// ══════ LOCAL DATA (defaults — overwritten by DB on load) ══════
 let GOLD={24:19115,22:17522,21:16725,18:14336,14:11150};
 let OZ={sell:594526,buy:594658};
 const GOLD_RATE=135.5;
@@ -707,15 +738,56 @@ const KARATS=[
 ];
 let CURR=[
   {id:'usd',labelAr:'دولار أمريكي',labelFr:'Dollar américain',code:'USD',cls:'curr-usd',buy:245,sell:248},
-  {id:'eur',labelAr:'يورو',labelFr:'Euro',code:'EUR',cls:'curr-eur',buy:268,sell:272},
-  {id:'sar',labelAr:'ريال سعودي',labelFr:'Riyal saoudien',code:'SAR',cls:'curr-sar',buy:65,sell:67},
-  {id:'cny',labelAr:'يوان صيني',labelFr:'Yuan chinois',code:'CNY',cls:'curr-cny',buy:34,sell:35},
+  {id:'eur',labelAr:'يورو',         labelFr:'Euro',             code:'EUR',cls:'curr-eur',buy:268,sell:272},
+  {id:'sar',labelAr:'ريال سعودي',   labelFr:'Riyal saoudien',  code:'SAR',cls:'curr-sar',buy:65, sell:67},
+  {id:'cny',labelAr:'يوان صيني',    labelFr:'Yuan chinois',    code:'CNY',cls:'curr-cny',buy:34, sell:35},
 ];
 let USDT={buy:245,sell:249};
 let lang='ar';
+let sbSession=null;
+
 const fDZ=v=>Math.round(v).toLocaleString('ar-DZ');
 const fUS=v=>Math.round(v/GOLD_RATE).toLocaleString('en-US');
 const ozSVG=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><path d="M12 8v8M9.5 10.5s.8-1.5 2.5-1.5 2.5 1 2.5 2-1 1.5-2.5 2-2.5 1-2.5 2 1 2 2.5 2 2.5-1.5 2.5-1.5"/></svg>`;
+
+// ══════ LOAD PRICES FROM SUPABASE ══════
+async function loadPrices(){
+  // Skip if running from local file (CORS won't work)
+  if(location.protocol==='file:'){
+    renderGold();renderCurr();
+    return;
+  }
+  try{
+    const r=await fetch(`${SB_URL}/rest/v1/prices?select=*`,{headers:sbHeaders});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const rows=await r.json();
+    if(!Array.isArray(rows)){renderGold();renderCurr();return;}
+    rows.forEach(row=>{
+      if(row.id==='gold'&&row.data){
+        const d=row.data;
+        if(d.k24)    GOLD[24]=d.k24;
+        if(d.k22)    GOLD[22]=d.k22;
+        if(d.k21)    GOLD[21]=d.k21;
+        if(d.k18)    GOLD[18]=d.k18;
+        if(d.k14)    GOLD[14]=d.k14;
+        if(d.oz_sell)OZ.sell =d.oz_sell;
+        if(d.oz_buy) OZ.buy  =d.oz_buy;
+      }
+      if(row.id==='currencies'&&row.data){
+        const d=row.data;
+        CURR.forEach(c=>{if(d[c.id]){c.buy=d[c.id].buy||c.buy;c.sell=d[c.id].sell||c.sell;}});
+      }
+      if(row.id==='usdt'&&row.data){
+        if(row.data.buy) USDT.buy =row.data.buy;
+        if(row.data.sell)USDT.sell=row.data.sell;
+      }
+    });
+  }catch(e){
+    // Silently use default values — will work once hosted on server
+    console.info('Using default prices (Supabase requires hosting)');
+  }
+  renderGold();renderCurr();
+}
 
 // ══════ RENDER ══════
 function renderGold(){
@@ -788,7 +860,6 @@ function toggleLang(){
   html.setAttribute('lang',lang);
   html.setAttribute('dir',lang==='ar'?'rtl':'ltr');
   document.getElementById('lang-label').textContent=lang==='ar'?'FR':'AR';
-  // Update title for SEO
   document.title=lang==='ar'?'أسعار الذهب اليوم في الجزائر 2025 | BOTDONE.COM':'Prix Or Algérie 2025 | BOTDONE.COM';
   renderGold();renderCurr();
 }
@@ -828,20 +899,52 @@ function sendContact(){
   document.getElementById('c-msg').value='';
 }
 
-// ══════ LOGIN ══════
-function doLogin(){
-  const email=document.getElementById('login-email').value.trim();
-  const pass=document.getElementById('login-pass').value;
+// ══════ LOGIN via Supabase Auth ══════
+async function doLogin(){
+  const emailVal=document.getElementById('login-email').value.trim();
+  const passVal =document.getElementById('login-pass').value;
   const err=document.getElementById('login-error');
-  if(email==='X'&&pass==='X'){
-    closeModal('login-overlay');
-    err.style.display='none';
-    enterAdmin();
-  }else{
+  const btn=document.querySelector('.login-submit');
+  btn.textContent='...';btn.disabled=true;
+  err.style.display='none';
+
+  // Local file fallback — works when hosted
+  if(location.protocol==='file:'){
+    if(emailVal===ADMIN_EMAIL && passVal==='029888870'){
+      closeModal('login-overlay');
+      enterAdmin();
+    }else{
+      err.style.display='block';
+      document.getElementById('login-pass').value='';
+    }
+    btn.innerHTML='<span class="ar">دخول</span><span class="fr">Se connecter</span>';
+    btn.disabled=false;
+    return;
+  }
+
+  try{
+    const r=await fetch(`${SB_URL}/auth/v1/token?grant_type=password`,{
+      method:'POST',
+      headers:{'apikey':SB_KEY,'Content-Type':'application/json'},
+      body:JSON.stringify({email:emailVal,password:passVal})
+    });
+    const data=await r.json();
+    if(data.access_token && data.user && data.user.email===ADMIN_EMAIL){
+      sbSession=data;
+      closeModal('login-overlay');
+      enterAdmin();
+    }else{
+      err.style.display='block';
+      document.getElementById('login-pass').value='';
+    }
+  }catch(e){
     err.style.display='block';
-    document.getElementById('login-pass').value='';
+  }finally{
+    btn.innerHTML='<span class="ar">دخول</span><span class="fr">Se connecter</span>';
+    btn.disabled=false;
   }
 }
+
 function enterAdmin(){
   showPage('admin',null);
   buildAdminForms();
@@ -854,6 +957,7 @@ function previewSite(){
   showPage('gold',firstTab);
 }
 function doLogout(){
+  sbSession=null;
   const btn=document.querySelector('.login-btn');
   btn.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><span class="ar">دخول</span><span class="fr">Connexion</span>`;
   btn.onclick=openLogin;
@@ -861,7 +965,7 @@ function doLogout(){
   showPage('gold',firstTab);
 }
 
-// ══════ ADMIN ══════
+// ══════ ADMIN FORMS ══════
 function buildAdminForms(){
   const gr=document.getElementById('gold-admin-rows');gr.innerHTML='';
   KARATS.forEach(x=>{gr.innerHTML+=`<div class="admin-row"><div class="admin-row-label">${x.labelAr} (${x.k}K)</div><input type="number" class="admin-input" id="adm-gold-${x.k}" value="${GOLD[x.k]}"/></div>`;});
@@ -872,32 +976,61 @@ function buildAdminForms(){
   document.getElementById('adm-usdt-buy').value=USDT.buy;
   document.getElementById('adm-usdt-sell').value=USDT.sell;
 }
-function flashSave(id){const el=document.getElementById(id);el.style.display='block';setTimeout(()=>el.style.display='none',2500);}
-function saveGold(){
+
+function flashSave(id,ok=true,msg=''){
+  const el=document.getElementById(id);
+  el.textContent=ok?'✓ تم الحفظ في قاعدة البيانات'+(msg?' — '+msg:''):'✗ فشل الحفظ: '+msg;
+  el.style.background=ok?'#e9f9ef':'#fff0f0';
+  el.style.color=ok?'#34c759':'#ff453a';
+  el.style.display='block';
+  setTimeout(()=>el.style.display='none',4000);
+}
+
+async function saveGold(){
   KARATS.forEach(x=>{const el=document.getElementById(`adm-gold-${x.k}`);if(el){const v=parseInt(el.value);if(v>0)GOLD[x.k]=v;}});
   const osEl=document.getElementById('adm-oz-sell'),obEl=document.getElementById('adm-oz-buy');
   if(osEl){const v=parseInt(osEl.value);if(v>0)OZ.sell=v;}
   if(obEl){const v=parseInt(obEl.value);if(v>0)OZ.buy=v;}
-  renderGold();flashSave('gold-save-ok');
+  renderGold();
+  if(location.protocol==='file:'){flashSave('gold-save-ok',true,'محلي فقط — ارفع الموقع للسيرفر');return;}
+  try{
+    await sbUpsert('prices',{id:'gold',data:{k24:GOLD[24],k22:GOLD[22],k21:GOLD[21],k18:GOLD[18],k14:GOLD[14],oz_sell:OZ.sell,oz_buy:OZ.buy}});
+    flashSave('gold-save-ok',true);
+  }catch(e){flashSave('gold-save-ok',false,e.message);}
 }
-function saveCurr(){
+
+async function saveCurr(){
   CURR.forEach(x=>{
     const bEl=document.getElementById(`adm-c-${x.id}-buy`),sEl=document.getElementById(`adm-c-${x.id}-sell`);
     if(bEl){const v=parseInt(bEl.value);if(v>0)x.buy=v;}
     if(sEl){const v=parseInt(sEl.value);if(v>0)x.sell=v;}
   });
-  renderCurr();flashSave('curr-save-ok');
+  renderCurr();
+  if(location.protocol==='file:'){flashSave('curr-save-ok',true,'محلي فقط — ارفع الموقع للسيرفر');return;}
+  try{
+    const currData={};
+    CURR.forEach(x=>{currData[x.id]={buy:x.buy,sell:x.sell};});
+    await sbUpsert('prices',{id:'currencies',data:currData});
+    flashSave('curr-save-ok',true);
+  }catch(e){flashSave('curr-save-ok',false,e.message);}
 }
-function saveUsdt(){
+
+async function saveUsdt(){
   const bEl=document.getElementById('adm-usdt-buy'),sEl=document.getElementById('adm-usdt-sell');
   if(bEl){const v=parseInt(bEl.value);if(v>0)USDT.buy=v;}
   if(sEl){const v=parseInt(sEl.value);if(v>0)USDT.sell=v;}
-  renderCurr();flashSave('usdt-save-ok');
+  renderCurr();
+  if(location.protocol==='file:'){flashSave('usdt-save-ok',true,'محلي فقط — ارفع الموقع للسيرفر');return;}
+  try{
+    await sbUpsert('prices',{id:'usdt',data:{buy:USDT.buy,sell:USDT.sell}});
+    flashSave('usdt-save-ok',true);
+  }catch(e){flashSave('usdt-save-ok',false,e.message);}
 }
 
 // ══════ INIT ══════
-renderGold();renderCurr();clock();
+clock();
 setInterval(clock,1000);
+loadPrices(); // loads from Supabase then renders
 </script>
 </body>
 </html>
